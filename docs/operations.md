@@ -68,3 +68,10 @@ Web-GUI deckt drei Bereiche ab: Stichwort-Regeln (Tabellen-Editor mit
 Hinzufügen/Bearbeiten/Löschen), Schwellwerte/Listen, und den Ollama-Prompt —
 plus einen Knopf, um `classify.py` sofort einmal auszulösen, statt bis zu
 5 Minuten auf den nächsten Timer-Tick zu warten.
+
+Absicherung: eigener Passwort-Login (gehashtes Passwort, kein Klartext auf
+Platte) plus zusätzlich vor die zentrale SSO/2FA-Lösung des Heimnetzes
+gehängt — konsistent mit allen anderen internen Admin-Tools dort, nur intern
+erreichbar (kein öffentlicher DNS-Eintrag). Beide Schutzschichten bleiben
+unabhängig voneinander bestehen (Defense-in-Depth), wie bei den anderen
+SSO-gegateten Diensten mit eigenem Fallback-Login üblich.
