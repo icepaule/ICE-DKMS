@@ -54,6 +54,8 @@ gleichzeitig schreibend auf `state.json` und die Mayan-Cabinets zugreifen.
 - [Dokument-Lebenszyklus](docs/document-lifecycle.md) — Zustände von OCR-Warten
   bis Ablage, inkl. Timeout- und Recheck-Verhalten
 - [Betriebs-Notizen](docs/operations.md) — gelernte Lektionen aus dem Betrieb
+- [Mayan-Workflow-Machbarkeit](docs/mayan-workflow-machbarkeit.md) — könnte
+  Mayan das nativ, ohne dieses externe Skript?
 
 ## Nicht-Ziele / Leitplanken
 
