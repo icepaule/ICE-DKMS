@@ -48,3 +48,23 @@ Siehe [Dokument-Lebenszyklus](document-lifecycle.md) — Dokumente, deren
 OCR-Text dauerhaft ausbleibt (unsupportete Dateiformate, leerer OCR-Inhalt),
 bekommen inzwischen einen eigenen Tag und werden periodisch statt gar nicht
 mehr erneut geprüft.
+
+## Konfiguration ausgelagert, eigene Web-GUI statt SSH/Editor
+
+Schwellwerte (Confidence, OCR-Warte-/Recheck-Intervalle), die Kategorienliste
+für Person B, die Eigentümer-Aliase und der Ollama-System-Prompt waren
+ursprünglich in `classify.py` selbst hartkodiert. Sie liegen jetzt in einer
+externen `config.json` (analog zu `keyword_rules.csv` für die Stichwort-Regeln)
+und werden bei jedem Lauf frisch geladen — Änderungen greifen ohne Neustart
+des Timers.
+
+Zur Bearbeitung dient eine kleine, separate Web-Anwendung (eigener
+systemd-Dienst, eigener Login) auf demselben Host wie `classify.py` — bewusst
+**kein** Mayan-Plugin: Ein echtes Plugin würde Custom-Code im produktiven
+Mayan-Container erfordern, inklusive Neustart-Risiko dort und Pflegeaufwand
+bei künftigen Mayan-Upgrades (siehe
+[Mayan-Workflow-Machbarkeit](mayan-workflow-machbarkeit.md)). Die separate
+Web-GUI deckt drei Bereiche ab: Stichwort-Regeln (Tabellen-Editor mit
+Hinzufügen/Bearbeiten/Löschen), Schwellwerte/Listen, und den Ollama-Prompt —
+plus einen Knopf, um `classify.py` sofort einmal auszulösen, statt bis zu
+5 Minuten auf den nächsten Timer-Tick zu warten.
