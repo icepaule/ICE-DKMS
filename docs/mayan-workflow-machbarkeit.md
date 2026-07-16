@@ -3,168 +3,176 @@
 Ausgangsfrage: Ließe sich das, was unser externes `classify.py` tut, auch
 nativ als Mayan-Workflow (ohne externes Skript) abbilden?
 
-**Kurzfassung:** Die Bausteine sind zu einem großen Teil vorhanden und
-inzwischen sogar konkreter als zunächst angenommen — es gibt einen
-**echten, nativen Ollama-Treiber**. Er löst aber ein anderes Problem
-(automatische Datei-Metadaten-Extraktion) als unsere Cabinet-Klassifizierung,
-und hat eine harte technische Einschränkung (255-Zeichen-Werte), die eine
-1:1-Übernahme unserer heutigen Logik verhindert.
+**Kurzfassung nach zwei Testrunden gegen die echte, laufende Instanz:**
+Metadaten-Automatisierung (Korrespondent, Dokumenttyp, Belegdatum) ist
+nativ **vollständig machbar** — mit echtem Test bestätigt. Cabinet-Zuordnung
+und Tag-Vergabe sind es **nicht**: Die zuständigen Workflow-Actions
+akzeptieren nur eine bei der Einrichtung fest ausgewählte, statische Liste
+von Zielen — kein Template, kein Laufzeitwert. Das ist keine
+Konfigurationsfrage, sondern ein architektonischer Fakt, verifiziert direkt
+im Quellcode der tatsächlich laufenden Version. Empfehlung bleibt daher:
+**beim externen Skript bleiben**, die alten Dienste werden nicht abgeschaltet.
 
-## Praxistest
+## Praxistest 1: Grundfunktion des Ollama-Treibers
 
-Der Ollama-Treiber wurde probeweise für einen einzelnen, wenig genutzten
-Dokumenttyp aktiviert und an einem einzelnen bestehenden Dokument über den
-manuellen "Submit"-Endpunkt ausgelöst (kein Massen-Reprocessing des
-Archivs — Verarbeitung läuft nur bei neuem Datei-Upload oder gezieltem
-manuellen Trigger für ein einzelnes Dokument). Ergebnis:
+Der native Ollama-Treiber (File-Metadata-Subsystem) wurde probeweise für
+einen einzelnen, wenig genutzten Dokumenttyp aktiviert und an einem
+einzelnen bestehenden Dokument über den manuellen "Submit"-Endpunkt
+ausgelöst (kein Massen-Reprocessing des Archivs — Verarbeitung läuft nur bei
+neuem Datei-Upload oder gezieltem manuellen Trigger für ein einzelnes
+Dokument).
 
-- **Erster Versuch mit `timeout: 60` schlug fehl** ("timed out") — der
-  Kaltstart des Modells auf dem Ollama-Host dauerte in der Praxis
-  ca. 62 Sekunden (`load_duration` in der Antwort), passend zu den ~3 Minuten
-  Kaltstart-Zeit, die schon beim externen Skript beobachtet wurden. Mit
-  `timeout: 240` lief es sauber durch.
-- Ein einfacher, statischer Test-Prompt ("Antworte nur mit OK") kam korrekt
-  als `message_content: "OK"` zurück — Grundverbindung zum Ollama-Host
+- Erster Versuch mit `timeout: 60` schlug fehl ("timed out") — der
+  Kaltstart des Modells dauerte in der Praxis ca. 62 Sekunden
+  (`load_duration` in der Antwort). Mit `timeout: 240` lief es sauber durch.
+- Ein statischer Test-Prompt kam korrekt zurück — Grundverbindung
   funktioniert.
-- Ein zweiter Test mit **echtem OCR-Text des Dokuments im Prompt**
+- Ein Test mit **echtem OCR-Text des Dokuments im Prompt**
   (`{{ document_file.document.version_active.pages_first.ocr_content.content }}`)
   hat funktioniert: Das Modell hat den Dokumentinhalt korrekt in einem Satz
-  auf Deutsch zusammengefasst. Die Template-Einbindung von Dokumentinhalten
-  in den Prompt ist damit nicht nur theoretisch im Code vorhanden, sondern
-  in der Praxis bestätigt.
-- Die Zusammenfassung selbst lag mit rund 240 Zeichen knapp unter dem
-  255-Zeichen-Limit — bei einer Bitte um eine kurze Zusammenfassung passt es
-  gerade noch, bei unserer mehrteiligen JSON-Antwort (Cabinet, zwei
-  Confidence-Werte, Korrespondent, Tags, Begründung) wäre das Limit sicher
-  gesprengt worden.
-- Nach dem Test wurde die Konfiguration wieder deaktiviert (bewusst kein
-  Dauerbetrieb ohne expliziten Beschluss dazu).
+  zusammengefasst. Template-Einbindung von Dokumentinhalten in den Prompt
+  ist damit praktisch bestätigt, nicht nur Theorie aus dem Code.
+- Bei dieser freien Zusammenfassung lag das Ergebnis mit rund 240 Zeichen
+  knapp unter dem 255-Zeichen-Limit pro gespeichertem Metadatenwert.
 
-**Fazit aus dem Praxistest:** Der Treiber funktioniert wie im Code
-beschrieben und ist für kurze, einzelne Extraktionsaufgaben (z. B. eine
-Ein-Satz-Zusammenfassung als zusätzliches, durchsuchbares Metadatum) real
-einsetzbar — bestätigt die vorige Einschätzung.
+## Praxistest 2: Kompakte JSON-Antwort + Auswertung im Template
 
-## Zwei verschiedene Mechanismen
+Zweiter Durchlauf mit einem auf ein enges JSON-Format gezwungenen Prompt
+(Cabinet-Kategorie aus fester Liste, Confidence, ein Tag) — bewusst kompakt
+gehalten, um das 255-Zeichen-Limit zu testen:
 
-Mayan hat zwei unterschiedliche Bausteine, die beide für "KI + Dokument"
-relevant sind, aber unterschiedliche Zwecke haben:
+- Ergebnis: `{"cabinet": "Vertraege", "conf": 0.8, "tag": "Aufhebungsvertrag"}`
+  — nur 65 Zeichen, inhaltlich korrekt für das Testdokument.
+- **Stolperstein unterwegs:** Ein erster Versuch mit einem JSON-Beispiel
+  *innerhalb* des Prompt-Texts brach mit `yaml.scanner.ScannerError:
+  mapping values are not allowed in this context` ab. Grund: Der
+  Prompt (`messages`) wird zweimal behandelt — erst als Django-Template
+  gerendert, danach vom Treiber selbst als YAML geparst. Doppelpunkte im
+  eingebetteten JSON-Beispiel wurden dabei als YAML-Schlüssel-Trenner
+  fehlinterpretiert. Mit korrektem Quoting des Prompt-Textes (YAML
+  Single-Quotes) funktionierte es. **Praktische Lektion:** Prompt-Texte für
+  diesen Treiber müssen YAML-sicher geschrieben werden — ein Detail, das in
+  keiner Dokumentation auftaucht und nur durch den Praxistest auffiel.
+- **Die entscheidende Prüfung:** Über Mayans eingebaute
+  **Template-Sandbox-API** (`.../objects/documents/document/{id}/sandbox/`,
+  gedacht für interaktive Property-Inspektion) wurde verifiziert, ob sich
+  aus diesem gespeicherten Wert wieder einzelne Felder herauslösen lassen:
+
+  ```
+  {% for d in document.file_latest.file_metadata_drivers.all %}
+    {% if d.driver.internal_name == "ollama_chat" %}
+      {% for e in d.entries.all %}
+        {% if e.key == "message_content" %}
+          {% with data=e.value|json_load %}
+            {{ data.cabinet }} / {{ data.conf }} / {{ data.tag }}
+          {% endwith %}
+        {% endif %}
+      {% endfor %}
+    {% endif %}
+  {% endfor %}
+  ```
+
+  Ergebnis: `CABINET=Person B / Vertraege | CONF=0.8 | TAG=Aufhebungsvertrag |
+  HOCH_GENUG=JA` — **funktioniert.** Mayan bringt über die `templating`-App
+  einen eingebauten `json_load`-Filter mit (`templating_json_tags.py`), der
+  JSON-Strings zu Python-Objekten deserialisiert, die dann per
+  Punkt-Notation im Template weiterverwendet werden können — inklusive
+  numerischer Vergleiche wie `{% if data.conf >= 0.6 %}` für
+  Confidence-Gates.
+
+  Das widerlegt die ursprüngliche Annahme, es gäbe kein eingebautes
+  JSON-Parsing in Mayan-Templates.
+
+## Der eigentliche Blocker: Cabinet- und Tag-Actions sind statisch
+
+Trotz des funktionierenden JSON-Rücktransports bleibt ein harter Blocker,
+verifiziert direkt im Quellcode der **aktuell laufenden Version**
+(`cabinets/workflow_actions.py`, `tags/workflow_actions.py`):
+
+- `CabinetAddAction` erwartet als Feld `cabinets` eine
+  `FormFieldFilteredModelChoiceMultiple` — eine **bei der Einrichtung der
+  Action fest ausgewählte** Menge konkreter Cabinet-Objekte
+  (`Cabinet.objects.filter(pk__in=self.kwargs.get('cabinets', ()))`).
+  Kein Template, kein Laufzeitwert.
+- `AttachTagAction` ist baugleich aufgebaut: `tags` ist eine feste,
+  admin-seitig gewählte Auswahl, keine dynamische Zuordnung pro Dokument.
+- Im Gegensatz dazu ist bei `DocumentMetadataEditAction` nur der
+  **Metadatentyp** (also z. B. "Korrespondent") fest gewählt — der
+  **Wert** ist ein `ModelTemplateField` und damit voll dynamisch pro
+  Dokument. Metadaten sind also grundsätzlich anders gebaut als
+  Cabinets/Tags.
 
 ```mermaid
-flowchart TD
-    subgraph A["Workflow-Engine (States/Transitions/Actions)"]
-        A1["Actions je State:\nCabinet zuweisen, Tag anhängen,\nMetadaten setzen, HTTP-Request"]
-        A2["Transitions mit\nTemplate-Bedingung"]
-    end
-    subgraph B["File-Metadata-Treiber (pro Dokumenttyp konfigurierbar)"]
-        B1["Ollama-Chat-Treiber /\nOpenAI-Response-Treiber"]
-        B2["Ergebnis als Key/Value-Paare\ngespeichert (je Wert max. 255 Zeichen)"]
-    end
-    B1 --> B2
-    B2 -.->|"nur über Template-Klimmzüge\nlesbar, kein direkter Link"| A1
+flowchart LR
+    A["AI-Antwort\n(JSON, geparst via json_load)"] --> B{"Ziel-Action"}
+    B -->|Metadaten setzen| C["Wert = Template\n→ dynamisch pro Dokument ✓"]
+    B -->|Cabinet zuweisen| D["Cabinet-Liste = fest gewählt\nbeim Einrichten der Action ✗"]
+    B -->|Tag anhängen| E["Tag-Liste = fest gewählt\nbeim Einrichten der Action ✗"]
 ```
 
-Die ursprüngliche Analyse ging von der Workflow-Engine aus (Abschnitt weiter
-unten). Der tatsächlich existierende KI-Baustein sitzt aber in der
-**File-Metadata-Extraktion**, einem eigenen, älteren Subsystem, das seit
-Version 4.10 zwei neue Treiber bekommen hat.
+**Konsequenz:** Selbst mit funktionierender JSON-Auswertung kann keine
+Standard-Action "füge zu Cabinet X hinzu, wobei X zur Laufzeit aus der
+AI-Antwort kommt" abbilden. Um trotzdem AI-gesteuert unterschiedliche
+Cabinets zu erreichen, bräuchte man **einen eigenen State + eine eigene
+Transition + eine eigene, fest verdrahtete `CabinetAddAction` pro
+möglichem Cabinet**, mit einer Transitions-Bedingung, die den
+JSON-Wert prüft (z. B. `{% if workflow_instance_context....cabinet ==
+"Versicherung" %}`). Für Person Bs kleine, feste Kategorienliste (9 Einträge)
+wäre das mit hohem manuellen Aufwand theoretisch baubar — aber selbst dann
+nur bis zur Kategorie-Ebene, nicht bis zum einzelnen Korrespondenten. Für
+Person A, dessen Cabinet-Baum aus hunderten spezifischen, wachsenden
+Korrespondenten-Cabinets besteht (inklusive Auto-Anlage neuer Cabinets für
+neue Korrespondenten), ist der Ansatz praktisch nicht tragbar: Für jeden
+neuen Korrespondenten müsste jemand manuell einen neuen State/Transition/
+Action-Satz in der Workflow-Oberfläche anlegen — genau die Automatisierung,
+die `classify.py` heute leistet, ginge verloren.
 
-## Was im Treiber-Code konkret verifiziert wurde
+## Zusätzlicher Fund: HTTPAction kann Antworten jetzt in den Workflow-Kontext schreiben
 
-Zugriff auf den Quellcode der tatsächlich laufenden Version (nicht nur
-Doku/Marketing-Text) zeigt:
+Ein Blick in den **aktuellen** Quellcode von `HTTPAction`
+(`document_states/workflow_actions.py`) zeigt eine Fähigkeit, die im alten,
+eingefrorenen Mirror-Repo (Stand 2022) noch fehlte: ein `response_store`-Schalter.
+Ist er aktiv, wird die vollständige, geparste JSON-Antwort des Aufrufs unter
+einem konfigurierbaren Namen in `workflow_instance.context` gespeichert
+(`workflow_instance.do_context_update(...)`) — persistent und in späteren
+Templates/Bedingungen der gleichen Workflow-Instanz auslesbar, **ohne** das
+255-Zeichen-Limit des File-Metadata-Systems.
 
-- Ein **`FileMetadataDriverOllamaChat`**-Treiber existiert und ist Teil der
-  Standardinstallation. Konfiguration je Dokumenttyp über vier Argumente:
-  `host`, `model`, `messages` (Chat-Prompt als YAML-Liste), `timeout`.
-  Intern wird schlicht `ollama.Client(host=...).chat(model=..., messages=...)`
-  aufgerufen — das offizielle Ollama-Python-Paket ist bereits Teil der
-  Installation.
-- Ein analoger **OpenAI-Response-API-Treiber** existiert ebenfalls, inkl.
-  konfigurierbarer `base_url` (explizit dokumentiert für "compatible
-  non-default endpoints/proxies" — ein Ansatzpunkt, um ihn ggf. auf einen
-  Ollama-Host mit OpenAI-kompatiblem Endpunkt umzubiegen, falls man nicht den
-  dedizierten Ollama-Treiber nutzen möchte).
-- **Alle Argumente werden pro Dokument als Django-Template gerendert**, mit
-  dem jeweiligen Dokument-Datei-Objekt im Kontext (`{{ document_file }}`).
-  Das heißt: der Prompt (`messages`) kann tatsächlich dynamisch pro Dokument
-  befüllt werden — keine starre, für alle Dokumente gleiche Anfrage.
-- **Beide Treiber sind standardmäßig deaktiviert** (`enabled = False`) —
-  kein Risiko ungewollter automatischer API-Aufrufe/Kosten nach einem
-  Upgrade, ohne dass man sie aktiv einschaltet.
-- Das Ergebnis wird als flache Liste von Key/Value-Paaren gespeichert (z. B.
-  `message.content`, `done`, `total_duration` — die komplette,
-  "flachgeklopfte" API-Antwortstruktur). **Der Wert ist auf 255 Zeichen pro
-  Feld begrenzt.**
-
-## Die entscheidende Lücke
-
-Zwei Probleme verhindern eine einfache 1:1-Übernahme unserer heutigen Logik:
-
-1. **255-Zeichen-Limit pro Wert.** Unsere heutige Ollama-Antwort ist ein
-   JSON-Objekt mit mehreren Feldern (Cabinet, zwei Confidence-Werte,
-   Korrespondent, bis zu 5 Tags, Dokumenttyp, Belegdatum, Begründung) — das
-   sprengt 255 Zeichen üblicherweise deutlich. Der native Treiber würde die
-   Modellantwort im Feld `message.content` schlicht abschneiden.
-2. **Keine direkte Brücke zur Workflow-Engine.** Die Actions der
-   Workflow-Engine (Cabinet zuweisen, Tag anhängen, Metadaten setzen) lesen
-   diese File-Metadata-Werte nicht automatisch mit. Ein Zugriff wäre nur über
-   eine `{% for %}`-Schleife über die Rohdaten in einem Template-Feld einer
-   Action denkbar (Django-Templates unterstützen keinen direkten
-   Schlüssel-Zugriff wie `entries['message.content']`) — und selbst dann
-   bräuchte man einen JSON-Parser innerhalb des Templates, um aus dem
-   (ohnehin abgeschnittenen) String wieder Cabinet/Confidence/Tags einzeln
-   herauszulösen. Dafür ist in den eingesehenen Kernmodulen kein
-   eingebautes Werkzeug vorhanden.
-
-Beides zusammen bedeutet: der native Treiber eignet sich gut für einfache,
-kurze Extraktionen (z. B. "gib mir das Belegdatum" oder "fasse in einem
-Satz zusammen"), aber nicht ohne Weiteres für unsere mehrteilige,
-JSON-Schema-constrained Klassifikationsantwort mit anschließender
-Cabinet-Entscheidung.
-
-## Ursprüngliche Analyse: Workflow-Engine-Bausteine (weiterhin relevant)
-
-Unabhängig vom File-Metadata-Treiber bietet die Workflow-Engine selbst
-brauchbare Bausteine, die für eine native Umsetzung nötig wären:
-
-- Eine generische **"Perform an HTTP request"-Action** kann einen beliebigen
-  externen Endpunkt aufrufen (URL/Payload/Headers/Methode sind
-  Template-gerendert) — sie verwirft aber die Antwort, verarbeitet sie
-  nicht weiter.
-- Fertige Actions für **Cabinet zuweisen**, **Tag anhängen**, **Metadaten
-  setzen** existieren.
-- Transitions können eine **Template-Bedingung** haben — bedingte
-  Verzweigung (z. B. nach Confidence-Schwelle) ist technisch möglich.
-- Workflow-Instanzen haben einen **persistenten JSON-Kontext**, der über
-  `extra_data` bei einer Transition befüllt und in späteren
-  Templates/Bedingungen wieder gelesen werden kann.
-
-Diese Bausteine würden erst durch eine **eigene Action-Klasse** (eigener
-Python-Code als Mayan-Plugin, der die Ollama-Antwort parst und strukturiert
-in den Workflow-Kontext schreibt) zu einer vollständigen, robusten Lösung.
-Das ist machbar, aber dann wieder eigener Code — ähnlich viel Aufwand wie
-das heutige externe Skript, nur als Mayan-Plugin statt als systemd-Service.
+Das bedeutet: Eine `HTTPAction`, die direkt Ollamas Chat-API mit unserem
+vollen JSON-Schema aufruft (statt des schlankeren File-Metadata-Treibers),
+könnte die komplette Antwort (Cabinet-Vorschlag, zwei Confidence-Werte,
+Korrespondent, Tags, Begründung) verlustfrei im Workflow-Kontext ablegen.
+Das verbessert die Ausgangslage für Metadaten-Automatisierung nochmal,
+**ändert aber nichts am Cabinet/Tag-Blocker** oben — der liegt an der
+Ziel-Action, nicht an der Datenübertragung.
 
 ## Was auch mit funktionierender AI-Anbindung nicht sauber nativ abbildbar wäre
 
 Unsere Dublettenschutz-Logik durchsucht bei jedem Dokument den **gesamten
 bestehenden Cabinet-Baum** nach einem passenden Korrespondenten-Blatt, bevor
 neu angelegt wird, und hält eine Batch-lokale Liste konsistent. Das ist eine
-dynamische Suche über eine wachsende Struktur — dafür gibt es keinen
-generischen Workflow-Action-Typ.
+dynamische Suche über eine wachsende Struktur mit Anlegen-falls-nötig-Logik
+— dafür gibt es keinen generischen Workflow-Action-Typ, und selbst eine
+Kette aus mehreren `HTTPAction`-Selbstaufrufen gegen die eigene Mayan-API
+würde das im Kern nur mit erheblichem Mehraufwand nachbauen, nicht
+eleganter lösen als der heutige Python-Code.
 
 ## Fazit
 
-- Ein nativer Ollama-Treiber existiert real und ist gut für **einfache**
-  Extraktionsaufgaben pro Dokument geeignet (kurze, einzelne Werte).
-- Für unsere **mehrstufige, JSON-Schema-constrained Klassifikation mit
-  Confidence-Gates und Cabinet-Dublettenschutz** reicht er nicht aus — das
-  255-Zeichen-Limit und die fehlende Brücke zur Workflow-Engine sind harte
-  Grenzen, keine Konfigurationsfrage.
-- Eine native Vollumsetzung wäre nur mit eigenem Plugin-Code möglich und
-  brächte gegenüber dem heutigen externen Skript keinen klaren Vorteil.
-- **Empfehlung bleibt: beim externen Skript bleiben.** Der native Treiber
-  ist aber ein guter Kandidat für kleinere Zusatzaufgaben (z. B. eine kurze
-  automatische Ein-Satz-Zusammenfassung als Datei-Metadatum), die nicht an
-  unserer Cabinet-Logik hängen.
+- **Metadaten (Korrespondent, Dokumenttyp, Belegdatum): nativ machbar**,
+  mit echtem Test bestätigt (JSON-Antwort → `json_load` → Feldzugriff →
+  Confidence-Vergleich, alles funktioniert).
+- **Tags: nur mit hohem manuellen Aufwand** (ein State/Transition/Action-Satz
+  pro möglichem Tag) und nur für eine kleine, stabile Tag-Liste realistisch.
+- **Cabinets: nicht praktikabel abbildbar** — der zentrale Blocker ist die
+  statische, bei der Einrichtung fest gewählte Ziel-Liste in
+  `CabinetAddAction`, kombiniert mit unserer dynamischen
+  Dublettenschutz-/Auto-Anlage-Logik. Das ist der wichtigste, wertvollste
+  Teil von `classify.py` — und genau der lässt sich nativ nicht ersetzen.
+- **Entscheidung: `classify.py` und der systemd-Timer bleiben aktiv.** Eine
+  Umstellung würde die automatische Cabinet-Zuordnung faktisch abschalten,
+  ohne einen gleichwertigen nativen Ersatz zu haben.
+- Der native Ollama-Treiber bleibt ein guter Kandidat für **zusätzliche,
+  unabhängige** Aufgaben (z. B. eine durchsuchbare Ein-Satz-Zusammenfassung
+  als Datei-Metadatum), die nicht an der Cabinet-Logik hängen — als Ergänzung
+  neben `classify.py`, nicht als Ersatz.
