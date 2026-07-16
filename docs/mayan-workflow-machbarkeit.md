@@ -10,6 +10,41 @@ inzwischen sogar konkreter als zunächst angenommen — es gibt einen
 und hat eine harte technische Einschränkung (255-Zeichen-Werte), die eine
 1:1-Übernahme unserer heutigen Logik verhindert.
 
+## Praxistest
+
+Der Ollama-Treiber wurde probeweise für einen einzelnen, wenig genutzten
+Dokumenttyp aktiviert und an einem einzelnen bestehenden Dokument über den
+manuellen "Submit"-Endpunkt ausgelöst (kein Massen-Reprocessing des
+Archivs — Verarbeitung läuft nur bei neuem Datei-Upload oder gezieltem
+manuellen Trigger für ein einzelnes Dokument). Ergebnis:
+
+- **Erster Versuch mit `timeout: 60` schlug fehl** ("timed out") — der
+  Kaltstart des Modells auf dem Ollama-Host dauerte in der Praxis
+  ca. 62 Sekunden (`load_duration` in der Antwort), passend zu den ~3 Minuten
+  Kaltstart-Zeit, die schon beim externen Skript beobachtet wurden. Mit
+  `timeout: 240` lief es sauber durch.
+- Ein einfacher, statischer Test-Prompt ("Antworte nur mit OK") kam korrekt
+  als `message_content: "OK"` zurück — Grundverbindung zum Ollama-Host
+  funktioniert.
+- Ein zweiter Test mit **echtem OCR-Text des Dokuments im Prompt**
+  (`{{ document_file.document.version_active.pages_first.ocr_content.content }}`)
+  hat funktioniert: Das Modell hat den Dokumentinhalt korrekt in einem Satz
+  auf Deutsch zusammengefasst. Die Template-Einbindung von Dokumentinhalten
+  in den Prompt ist damit nicht nur theoretisch im Code vorhanden, sondern
+  in der Praxis bestätigt.
+- Die Zusammenfassung selbst lag mit rund 240 Zeichen knapp unter dem
+  255-Zeichen-Limit — bei einer Bitte um eine kurze Zusammenfassung passt es
+  gerade noch, bei unserer mehrteiligen JSON-Antwort (Cabinet, zwei
+  Confidence-Werte, Korrespondent, Tags, Begründung) wäre das Limit sicher
+  gesprengt worden.
+- Nach dem Test wurde die Konfiguration wieder deaktiviert (bewusst kein
+  Dauerbetrieb ohne expliziten Beschluss dazu).
+
+**Fazit aus dem Praxistest:** Der Treiber funktioniert wie im Code
+beschrieben und ist für kurze, einzelne Extraktionsaufgaben (z. B. eine
+Ein-Satz-Zusammenfassung als zusätzliches, durchsuchbares Metadatum) real
+einsetzbar — bestätigt die vorige Einschätzung.
+
 ## Zwei verschiedene Mechanismen
 
 Mayan hat zwei unterschiedliche Bausteine, die beide für "KI + Dokument"
